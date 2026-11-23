@@ -1,0 +1,222 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Opaq API",
+    "version": "1.0.0",
+    "summary": "Private AI inference on Solana.",
+    "description": "OpenAI-compatible and Anthropic-compatible inference gateway. You pay per token from a sealed balance funded by private transfers in Solana Privacy Rings. Prompts and completions are never stored. Human docs: https://opaq.computer/docs",
+    "contact": { "name": "Opaq", "url": "https://opaq.computer", "email": "team@opaq.computer" },
+    "termsOfService": "https://opaq.computer/terms"
+  },
+  "servers": [{ "url": "https://opaq.computer", "description": "Production (Solana mainnet)" }],
+  "externalDocs": { "description": "Opaq documentation", "url": "https://opaq.computer/docs" },
+  "tags": [
+    { "name": "Models", "description": "The live catalog with prices." },
+    { "name": "OpenAI format", "description": "Drop-in for the OpenAI SDKs. Change the base URL and the key." },
+    { "name": "Anthropic format", "description": "Drop-in for the Anthropic SDKs and Claude Code." }
+  ],
+  "security": [{ "bearerAuth": [] }],
+  "paths": {
+    "/v1/models": {
+      "get": {
+        "tags": ["Models"],
+        "operationId": "listModels",
+        "summary": "List models",
+        "description": "Every model available through Opaq, with live prices per 1M tokens (margin included), context length, modalities and provider stats. No key needed.",
+        "security": [],
+        "responses": {
+          "200": { "description": "The catalog.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ModelList" } } } }
+        }
+      }
+    },
+    "/v1/chat/completions": {
+      "post": {
+        "tags": ["OpenAI format"],
+        "operationId": "createChatCompletion",
+        "summary": "Create a chat completion",
+        "description": "OpenAI Chat Completions. Supports `stream: true` (server-sent events), tools, vision and the standard parameters. The `user` field is removed before routing. Requests that fail upstream are not charged.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ChatCompletionRequest" },
+              "example": { "model": "anthropic/claude-sonnet-5.5", "messages": [{ "role": "user", "content": "Hello" }] }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "A completion, or a stream of chat.completion.chunk events when `stream` is true.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ChatCompletion" } },
+              "text/event-stream": { "schema": { "type": "string" } }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Error" },
+          "402": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "429": { "$ref": "#/components/responses/Error" },
+          "502": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/messages": {
+      "post": {
+        "tags": ["Anthropic format"],
+        "operationId": "createMessage",
+        "summary": "Create a message",
+        "description": "Anthropic Messages format, so Claude Code and the Anthropic SDKs run on a sealed balance. The key is accepted in `x-api-key` or `Authorization: Bearer`. Bare ids such as `claude-sonnet-5.5` work. Streaming supported. `metadata.user_id` is removed before routing.",
+        "security": [{ "bearerAuth": [] }, { "apiKeyHeader": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/MessagesRequest" },
+              "example": { "model": "claude-sonnet-5.5", "max_tokens": 1024, "messages": [{ "role": "user", "content": "Hello" }] }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "A message, or a stream of Anthropic events when `stream` is true.",
+            "content": {
+              "application/json": { "schema": { "type": "object", "additionalProperties": true } },
+              "text/event-stream": { "schema": { "type": "string" } }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Error" },
+          "402": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "429": { "$ref": "#/components/responses/Error" },
+          "502": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/messages/count_tokens": {
+      "post": {
+        "tags": ["Anthropic format"],
+        "operationId": "countTokens",
+        "summary": "Count tokens",
+        "description": "Estimated input tokens for a Messages payload.",
+        "security": [{ "bearerAuth": [] }, { "apiKeyHeader": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MessagesRequest" } } } },
+        "responses": {
+          "200": {
+            "description": "The estimate.",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "input_tokens": { "type": "integer" } }, "required": ["input_tokens"] } } }
+          },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": { "type": "http", "scheme": "bearer", "description": "An Opaq API key (opaq_sk_...), created in the console. Shown once, stored hashed." },
+      "apiKeyHeader": { "type": "apiKey", "in": "header", "name": "x-api-key", "description": "Same key, Anthropic style." }
+    },
+    "responses": {
+      "Error": {
+        "description": "Error. Codes: invalid_api_key (401), insufficient_balance and key_spend_cap (402), model_not_found (404), rate_limited (429), upstream_unreachable (502, not charged).",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": { "message": { "type": "string" }, "type": { "type": "string" }, "code": { "type": "string" } },
+            "required": ["message"]
+          }
+        },
+        "required": ["error"]
+      },
+      "Model": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "examples": ["anthropic/claude-sonnet-5.5"] },
+          "object": { "const": "model" },
+          "created": { "type": "integer" },
+          "owned_by": { "type": "string" },
+          "name": { "type": "string" },
+          "context_length": { "type": "integer" },
+          "private": { "type": "boolean", "description": "Served inside a hardware enclave (TEE)." },
+          "input_modalities": { "type": "array", "items": { "type": "string" } },
+          "output_modalities": { "type": "array", "items": { "type": "string" } },
+          "features": { "type": "array", "items": { "type": "string" } },
+          "pricing": {
+            "type": "object",
+            "description": "USD per 1M tokens, margin included.",
+            "properties": { "prompt_per_mtok": { "type": "number" }, "completion_per_mtok": { "type": "number" } }
+          }
+        },
+        "required": ["id", "object"]
+      },
+      "ModelList": {
+        "type": "object",
+        "properties": { "object": { "const": "list" }, "data": { "type": "array", "items": { "$ref": "#/components/schemas/Model" } } },
+        "required": ["object", "data"]
+      },
+      "ChatMessage": {
+        "type": "object",
+        "properties": {
+          "role": { "enum": ["system", "developer", "user", "assistant", "tool"] },
+          "content": { "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "object" } }, { "type": "null" }] }
+        },
+        "required": ["role"],
+        "additionalProperties": true
+      },
+      "ChatCompletionRequest": {
+        "type": "object",
+        "properties": {
+          "model": { "type": "string", "description": "A full id from /v1/models." },
+          "messages": { "type": "array", "items": { "$ref": "#/components/schemas/ChatMessage" } },
+          "stream": { "type": "boolean" },
+          "max_tokens": { "type": "integer" },
+          "temperature": { "type": "number" },
+          "tools": { "type": "array", "items": { "type": "object" } }
+        },
+        "required": ["model", "messages"],
+        "additionalProperties": true
+      },
+      "ChatCompletion": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "object": { "const": "chat.completion" },
+          "model": { "type": "string" },
+          "choices": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": { "index": { "type": "integer" }, "message": { "$ref": "#/components/schemas/ChatMessage" }, "finish_reason": { "type": ["string", "null"] } }
+            }
+          },
+          "usage": {
+            "type": "object",
+            "properties": { "prompt_tokens": { "type": "integer" }, "completion_tokens": { "type": "integer" }, "total_tokens": { "type": "integer" } }
+          }
+        },
+        "additionalProperties": true
+      },
+      "MessagesRequest": {
+        "type": "object",
+        "properties": {
+          "model": { "type": "string" },
+          "max_tokens": { "type": "integer" },
+          "system": { "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "object" } }] },
+          "messages": {
+            "type": "array",
+            "items": { "type": "object", "properties": { "role": { "enum": ["user", "assistant"] }, "content": {} }, "required": ["role", "content"] }
+          },
+          "stream": { "type": "boolean" },
+          "tools": { "type": "array", "items": { "type": "object" } }
+        },
+        "required": ["model", "messages"],
+        "additionalProperties": true
+      }
+    }
+  }
+}
